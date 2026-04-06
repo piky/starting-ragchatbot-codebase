@@ -116,12 +116,8 @@ Provide only the direct answer to what was asked.
         Returns:
             Final response text after tool execution
         """
-        # Add AI's tool use response to messages
-        messages.append({
-            "role": "assistant",
-            "content": initial_response.message.content or "",
-            "tool_calls": initial_response.message.tool_calls
-        })
+        # Add AI's tool use response to messages (append message object directly)
+        messages.append(initial_response.message)
 
         # Execute all tool calls and collect results
         for tool_call in initial_response.message.tool_calls:
@@ -130,9 +126,11 @@ Provide only the direct answer to what was asked.
                 **tool_call.function.arguments
             )
 
+            # Tool result message requires tool_name field for Ollama
             messages.append({
                 "role": "tool",
-                "content": tool_result
+                "content": tool_result,
+                "tool_name": tool_call.function.name
             })
 
         # Get final response
