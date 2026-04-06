@@ -26,24 +26,24 @@ uv run ./run.sh
 cd backend && uv run uvicorn app:app --reload --port 8000
 ```
 
-Access at http://localhost:8000. Requires `ANTHROPIC_API_KEY` in `.env` file.
+Access at http://localhost:8000. Requires Ollama running locally (default: `http://localhost:11434`).
 Note: `run.sh` handles its own uv invocation internally.
 
 ## Architecture
 
 ### RAG System Flow
-The system uses **tool-based AI generation** where Claude decides when to search course materials:
+The system uses **tool-based AI generation** where Ollama decides when to search course materials:
 
 1. User query → `RAGSystem.query()`
-2. `AIGenerator.generate_response()` sends query + tool definitions to Claude
-3. If Claude responds with `tool_use` stop reason, `_handle_tool_execution()` runs `CourseSearchTool`
+2. `AIGenerator.generate_response()` sends query + tool definitions to Ollama
+3. If Ollama responds with tool calls, `_handle_tool_execution()` runs `CourseSearchTool`
 4. `CourseSearchTool.execute()` calls `VectorStore.search()` which queries ChromaDB
-5. Search results are returned to Claude, which synthesizes a final response
+5. Search results are returned to Ollama, which synthesizes a final response
 
 ### Key Components
 - **RAGSystem** (`rag_system.py`): Orchestrates document processing, search, AI generation, and sessions
-- **AIGenerator** (`ai_generator.py`): Thin wrapper around Anthropic Claude API with tool execution
-- **ToolManager/CourseSearchTool** (`search_tools.py`): Registers Claude tools and executes searches
+- **AIGenerator** (`ai_generator.py`): Wrapper around Ollama API with tool execution
+- **ToolManager/CourseSearchTool** (`search_tools.py`): Registers tools and executes searches
 - **VectorStore** (`vector_store.py`): ChromaDB wrapper with two collections:
   - `course_catalog`: Course metadata (title, instructor, lessons)
   - `course_content`: Chunked course material for semantic search
@@ -75,5 +75,6 @@ Lesson 2: [title]
 - `CHUNK_OVERLAP`: 100 chars
 - `MAX_RESULTS`: 5 search results
 - `MAX_HISTORY`: 2 conversation exchanges
-- `ANTHROPIC_MODEL`: claude-sonnet-4-20250514
+- `OLLAMA_MODEL`: glm-5:cloud (or other Ollama model)
+- `OLLAMA_HOST`: http://localhost:11434 (Ollama server URL)
 - `EMBEDDING_MODEL`: all-MiniLM-L6-v2
