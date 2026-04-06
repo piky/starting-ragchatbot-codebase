@@ -70,6 +70,9 @@ async def query_documents(request: QueryRequest):
             sources=sources,
             session_id=session_id
         )
+    except RuntimeError as e:
+        # External AI service failure should be surfaced clearly
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

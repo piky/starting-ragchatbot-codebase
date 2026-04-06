@@ -1,4 +1,4 @@
-from ollama import Client
+from ollama import Client, RequestError, ResponseError
 from typing import List, Optional, Dict, Any
 
 class AIGenerator:
@@ -78,14 +78,16 @@ Provide only the direct answer to what was asked.
             else self.SYSTEM_PROMPT
         )
 
-        # Build messages list
-        messages = [{"role": "user", "content": query}]
+        # Build messages list with a system prompt for Ollama
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": query}
+        ]
 
         # Prepare API call parameters
         kwargs = {
             "model": self.model,
             "messages": messages,
-            "system": system_content,
             "options": self.base_options
         }
 
@@ -94,10 +96,13 @@ Provide only the direct answer to what was asked.
             kwargs["tools"] = self._convert_tools_to_ollama(tools)
 
         # Get response from Ollama
-        response = self.client.chat(**kwargs)
+        try:
+            response = self.client.chat(**kwargs)
+        except (RequestError, ResponseError) as e:
+            raise RuntimeError(f"Ollama client error: {e}") from e
 
         # Handle tool execution if needed
-        if response.message.tool_calls and tool_manager:
+        if getattr(response.message, "tool_calls", None) and tool_manager:
             return self._handle_tool_execution(response, messages, system_content, tool_manager)
 
         # Return direct response
