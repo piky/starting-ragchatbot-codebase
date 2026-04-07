@@ -122,19 +122,22 @@ function addMessage(content, type, sources = null, isWelcome = false) {
     let html = `<div class="message-content">${displayContent}</div>`;
     
     if (sources && sources.length > 0) {
-        // Render sources with clickable links
+        // Render sources with clickable links and styled list items
         const sourceElements = sources.map(source => {
-            if (source.url) {
-                return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">${source.text}</a>`;
-            } else {
-                return `<span class="source-text">${source.text}</span>`;
-            }
+            const sourceContent = source.url
+                ? `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">${source.text}</a>`
+                : `<span class="source-text">${source.text}</span>`;
+            return `<li class="source-item">${sourceContent}</li>`;
         });
         
         html += `
             <details class="sources-collapsible">
                 <summary class="sources-header">Sources</summary>
-                <div class="sources-content">${sourceElements.join(', ')}</div>
+                <div class="sources-content">
+                    <ul class="sources-list">
+                        ${sourceElements.join('')}
+                    </ul>
+                </div>
             </details>
         `;
     }
