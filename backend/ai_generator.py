@@ -139,10 +139,11 @@ Provide only the direct answer to what was asked.
             })
 
         # Get final response
+        # Add system message to messages list for Ollama
+        final_messages = [{"role": "system", "content": system_content}] + messages
         final_response = self.client.chat(
             model=self.model,
-            messages=messages,
-            system=system_content,
+            messages=final_messages,
             options=self.base_options
         )
 
