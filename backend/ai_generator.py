@@ -135,8 +135,8 @@ Provide only the direct answer to what was asked.
 
         Each round:
         1. Execute tool calls and add results to messages
-        2. If round < max_rounds and more tool calls exist, make another API call
-        3. Otherwise, synthesize final response
+        2. If not last round and response has tool_calls, make another API call
+        3. On last round or when no more tool_calls, synthesize final response
 
         Args:
             initial_response: The initial response containing tool use requests
@@ -152,7 +152,7 @@ Provide only the direct answer to what was asked.
         current_response = initial_response
 
         for round_num in range(max_rounds):
-            # Add AI's tool use response to messages
+            # Add AI's tool use response to messages (append message object directly)
             messages.append(current_response.message)
 
             # Execute all tool calls and collect results
@@ -169,8 +169,11 @@ Provide only the direct answer to what was asked.
                     "tool_name": tool_call.function.name
                 })
 
-            # If this was the last round, get final response and return
-            if round_num == max_rounds - 1:
+            # Check if we should continue to another round
+            has_more_tool_calls = getattr(current_response.message, "tool_calls", None)
+
+            if not has_more_tool_calls or round_num == max_rounds - 1:
+                # No more tool calls or max rounds reached - synthesize final response
                 api_messages = [{"role": "system", "content": system_content}] + messages
                 try:
                     final_response = self.client.chat(
@@ -184,17 +187,15 @@ Provide only the direct answer to what was asked.
                     raise RuntimeError(f"Ollama client error: {e}") from e
                 return final_response.message.content or ""
 
-            # Build messages for next API call
+            # Not last round and has more tool calls - make API call for next round
             api_messages = [{"role": "system", "content": system_content}] + messages
 
-            # Prepare kwargs - include tools for next round
+            # Pass tools for potential next round
             kwargs = {
                 "model": self.model,
                 "messages": api_messages,
                 "options": self.base_options
             }
-
-            # Pass tools for potential next round
             if tools:
                 kwargs["tools"] = self._convert_tools_to_ollama(tools)
 
@@ -206,20 +207,5 @@ Provide only the direct answer to what was asked.
             except Exception as e:
                 raise RuntimeError(f"Ollama client error: {e}") from e
 
-            # Check if more tool calls - if not, we're done (get final response)
-            if not getattr(current_response.message, "tool_calls", None):
-                api_messages = [{"role": "system", "content": system_content}] + messages
-                try:
-                    final_response = self.client.chat(
-                        model=self.model,
-                        messages=api_messages,
-                        options=self.base_options
-                    )
-                except (RequestError, ResponseError) as e:
-                    raise RuntimeError(f"Ollama client error: {e}") from e
-                except Exception as e:
-                    raise RuntimeError(f"Ollama client error: {e}") from e
-                return final_response.message.content or ""
-
-        # This should not be reached, but as a safety net
+        # Safety net (should not reach here)
         return current_response.message.content or ""
