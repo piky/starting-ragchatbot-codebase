@@ -100,6 +100,8 @@ Provide only the direct answer to what was asked.
             response = self.client.chat(**kwargs)
         except (RequestError, ResponseError) as e:
             raise RuntimeError(f"Ollama client error: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Ollama client error: {e}") from e
 
         # Handle tool execution if needed
         if getattr(response.message, "tool_calls", None) and tool_manager:

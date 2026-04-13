@@ -52,22 +52,25 @@ class CourseSearchTool(Tool):
     def execute(self, query: str, course_name: Optional[str] = None, lesson_number: Optional[int] = None) -> str:
         """
         Execute the search tool with given parameters.
-        
+
         Args:
             query: What to search for
             course_name: Optional course filter
             lesson_number: Optional lesson filter
-            
+
         Returns:
             Formatted search results or error message
         """
-        
-        # Use the vector store's unified search interface
-        results = self.store.search(
-            query=query,
-            course_name=course_name,
-            lesson_number=lesson_number
-        )
+
+        try:
+            # Use the vector store's unified search interface
+            results = self.store.search(
+                query=query,
+                course_name=course_name,
+                lesson_number=lesson_number
+            )
+        except Exception as e:
+            return str(e)
         
         # Handle errors
         if results.error:
@@ -114,9 +117,10 @@ class CourseSearchTool(Tool):
             source_obj = {"text": source_text}
             if source_url:
                 source_obj["url"] = source_url
-            
+                header += f" ({source_url})"
+
             sources.append(source_obj)
-            
+
             formatted.append(f"{header}\n{doc}")
         
         # Store sources for retrieval

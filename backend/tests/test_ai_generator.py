@@ -13,10 +13,13 @@ from ai_generator import AIGenerator
 # ---------------------------------------------------------------------------
 
 def make_message_mock(content=None, tool_calls=None):
+    # Structure needs to match: response.message.content
     msg = MagicMock()
+    response = MagicMock()
+    response.message = msg
     msg.content = content
     msg.tool_calls = tool_calls
-    return msg
+    return response
 
 
 def make_tool_call(name, arguments):
