@@ -333,3 +333,210 @@ class TestSystemPrompt:
     def test_base_options_limit_token_predict(self):
         gen = AIGenerator(model="test-model")
         assert gen.base_options["num_predict"] == 800
+
+    def test_system_prompt_mentions_sequential_calling(self):
+        gen = AIGenerator(model="test-model")
+        assert "sequential" in gen.SYSTEM_PROMPT.lower() or "2" in gen.SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Sequential Tool Calling
+# ---------------------------------------------------------------------------
+
+class TestSequentialToolCalling:
+    """Tests for sequential tool calling with up to 2 rounds."""
+
+    def test_two_sequential_tool_calls_with_comparison_query(self):
+        """AI makes 2 tool calls across separate API rounds to chain operations.
+
+        Example: Get lesson title, then search for related courses.
+        """
+        with patch("ai_generator.Client") as MockClient:
+            # Round 1: AI requests first tool call (get lesson title)
+            tool_call_1 = make_tool_call(
+                "get_lesson_title",
+                {"course_name": "Python Basics", "lesson_number": 4}
+            )
+            round1_response = make_message_mock(content=None, tool_calls=[tool_call_1])
+
+            # Round 2: AI requests second tool call (search with title)
+            tool_call_2 = make_tool_call(
+                "search_course_content",
+                {"query": "Object-Oriented Programming"}
+            )
+            round2_response = make_message_mock(content=None, tool_calls=[tool_call_2])
+
+            # Final: AI returns synthesized answer
+            final_response = make_message_mock(
+                content="Course 'Advanced Python' covers the same topic."
+            )
+
+            MockClient.return_value.chat.side_effect = [
+                round1_response,
+                round2_response,
+                final_response,
+            ]
+
+            mock_tm = MagicMock()
+            mock_tm.execute_tool.side_effect = [
+                "Lesson 4: Object-Oriented Programming",  # Result of first tool
+                "Found course: Advanced Python - Object-Oriented Programming",  # Result of second tool
+            ]
+
+            gen = AIGenerator(model="test-model", host="http://localhost:11434")
+            result = gen.generate_response(
+                "Find a course that discusses the same topic as lesson 4 of Python Basics",
+                tools=[{"name": "get_lesson_title", "description": "", "input_schema": {}},
+                       {"name": "search_course_content", "description": "", "input_schema": {}}],
+                tool_manager=mock_tm,
+            )
+
+            # Verify 2 tool calls were made
+            assert mock_tm.execute_tool.call_count == 2
+            # Verify final response contains synthesized answer
+            assert "Advanced Python" in result
+            # Verify 3 API calls were made (2 tool rounds + 1 final)
+            assert MockClient.return_value.chat.call_count == 3
+
+    def test_single_tool_call_in_first_round_then_done(self):
+        """AI makes one tool call and final response has no more tool calls."""
+        with patch("ai_generator.Client") as MockClient:
+            # Round 1: AI requests one tool call
+            tool_call = make_tool_call(
+                "search_course_content",
+                {"query": "Python functions"}
+            )
+            round1_response = make_message_mock(content=None, tool_calls=[tool_call])
+
+            # Final: AI returns answer without more tool calls
+            final_response = make_message_mock(
+                content="Python functions are defined using the def keyword."
+            )
+
+            MockClient.return_value.chat.side_effect = [
+                round1_response,
+                final_response,
+            ]
+
+            mock_tm = MagicMock()
+            mock_tm.execute_tool.return_value = "Found content about Python functions."
+
+            gen = AIGenerator(model="test-model", host="http://localhost:11434")
+            result = gen.generate_response(
+                "What are Python functions?",
+                tools=[{"name": "search_course_content", "description": "", "input_schema": {}}],
+                tool_manager=mock_tm,
+            )
+
+            assert mock_tm.execute_tool.call_count == 1
+            assert "def" in result
+            assert MockClient.return_value.chat.call_count == 2
+
+    def test_max_rounds_terminates_loop(self):
+        """After 2 rounds, loop terminates even if AI requests more tools."""
+        with patch("ai_generator.Client") as MockClient:
+            # Round 1: AI requests first tool call
+            tool_call_1 = make_tool_call("search_course_content", {"query": "a"})
+            round1_response = make_message_mock(content=None, tool_calls=[tool_call_1])
+
+            # Round 2: AI requests second tool call
+            tool_call_2 = make_tool_call("search_course_content", {"query": "b"})
+            round2_response = make_message_mock(content=None, tool_calls=[tool_call_2])
+
+            # After round 2, AI still wants to make a tool call but we stop
+            MockClient.return_value.chat.side_effect = [
+                round1_response,
+                round2_response,
+            ]
+
+            mock_tm = MagicMock()
+            mock_tm.execute_tool.side_effect = ["Result A", "Result B"]
+
+            gen = AIGenerator(model="test-model", host="http://localhost:11434")
+            # This should NOT make a 3rd API call - it should stop at round 2
+            result = gen.generate_response(
+                "complex query requiring multiple searches",
+                tools=[{"name": "search_course_content", "description": "", "input_schema": {}}],
+                tool_manager=mock_tm,
+            )
+
+            # Only 2 API calls made (despite 2 rounds of tool calls)
+            assert MockClient.return_value.chat.call_count == 2
+            assert mock_tm.execute_tool.call_count == 2
+
+    def test_tool_execution_error_in_round_2_propagates(self):
+        """Tool execution error in second round raises RuntimeError."""
+        with patch("ai_generator.Client") as MockClient:
+            # Round 1: AI requests first tool call
+            tool_call_1 = make_tool_call("search_course_content", {"query": "first"})
+            round1_response = make_message_mock(content=None, tool_calls=[tool_call_1])
+
+            # Round 2: AI requests second tool call
+            tool_call_2 = make_tool_call("search_course_content", {"query": "second"})
+            round2_response = make_message_mock(content=None, tool_calls=[tool_call_2])
+
+            MockClient.return_value.chat.side_effect = [
+                round1_response,
+                round2_response,
+            ]
+
+            mock_tm = MagicMock()
+            mock_tm.execute_tool.side_effect = [
+                "First result",
+                RuntimeError("Tool execution failed"),
+            ]
+
+            gen = AIGenerator(model="test-model", host="http://localhost:11434")
+
+            with pytest.raises(RuntimeError) as exc_info:
+                gen.generate_response(
+                    "query",
+                    tools=[{"name": "search_course_content", "description": "", "input_schema": {}}],
+                    tool_manager=mock_tm,
+                )
+
+            assert "Tool execution failed" in str(exc_info.value)
+
+    def test_conversation_context_preserved_between_rounds(self):
+        """Messages accumulate correctly across rounds."""
+        with patch("ai_generator.Client") as MockClient:
+            tool_call_1 = make_tool_call("search_course_content", {"query": "first"})
+            round1_response = make_message_mock(content=None, tool_calls=[tool_call_1])
+
+            tool_call_2 = make_tool_call("search_course_content", {"query": "second"})
+            round2_response = make_message_mock(content=None, tool_calls=[tool_call_2])
+
+            final_response = make_message_mock(content="Final answer.")
+
+            MockClient.return_value.chat.side_effect = [
+                round1_response,
+                round2_response,
+                final_response,
+            ]
+
+            mock_tm = MagicMock()
+            mock_tm.execute_tool.side_effect = ["Result 1", "Result 2"]
+
+            gen = AIGenerator(model="test-model", host="http://localhost:11434")
+            gen.generate_response(
+                "test query",
+                tools=[{"name": "search_course_content", "description": "", "input_schema": {}}],
+                tool_manager=mock_tm,
+            )
+
+            # Verify messages were passed to each API call
+            calls = MockClient.return_value.chat.call_args_list
+
+            # First call - initial query
+            first_messages = calls[0].kwargs["messages"]
+            assert len(first_messages) == 2  # system + user
+
+            # Second call - after first tool
+            second_messages = calls[1].kwargs["messages"]
+            # Should have: system + user + assistant tool call + tool result
+            assert len(second_messages) == 4
+
+            # Third call - after second tool
+            third_messages = calls[2].kwargs["messages"]
+            # Should have: system + user + 2x(assistant tool call + tool result)
+            assert len(third_messages) == 6

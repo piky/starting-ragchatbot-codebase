@@ -9,7 +9,7 @@ class AIGenerator:
 
 Search Tool Usage:
 - Use the search tool **only** for questions about specific course content or detailed educational materials
-- **One search per query maximum**
+- **Sequential tool calling supported** — you may make up to 2 tool calls across separate reasoning rounds to chain operations (e.g. first retrieve a lesson title, then search for courses on that topic)
 - Synthesize search results into accurate, fact-based responses
 - If search yields no results, state this clearly without offering alternatives
 
@@ -61,6 +61,10 @@ Provide only the direct answer to what was asked.
         """
         Generate AI response with optional tool usage and conversation context.
 
+        Supports sequential tool calling with up to 2 rounds per query.
+        Each tool call round allows the AI to reason about previous results
+        before making additional tool calls.
+
         Args:
             query: The user's question or request
             conversation_history: Previous messages for context
@@ -103,50 +107,119 @@ Provide only the direct answer to what was asked.
         except Exception as e:
             raise RuntimeError(f"Ollama client error: {e}") from e
 
-        # Handle tool execution if needed
+        # Handle sequential tool execution if needed (up to 2 rounds)
         if getattr(response.message, "tool_calls", None) and tool_manager:
-            return self._handle_tool_execution(response, messages, system_content, tool_manager)
+            return self._handle_sequential_tool_execution(
+                initial_response=response,
+                messages=messages,
+                system_content=system_content,
+                tool_manager=tool_manager,
+                tools=tools,
+                max_rounds=2
+            )
 
         # Return direct response
         return response.message.content or ""
 
-    def _handle_tool_execution(self, initial_response, messages: List, system_content: str, tool_manager) -> str:
+    def _handle_sequential_tool_execution(
+        self,
+        initial_response,
+        messages: List,
+        system_content: str,
+        tool_manager,
+        tools: Optional[List],
+        max_rounds: int = 2
+    ) -> str:
         """
-        Handle execution of tool calls and get follow-up response.
+        Handle sequential tool execution with up to max_rounds.
+
+        Each round:
+        1. Execute tool calls and add results to messages
+        2. If round < max_rounds and more tool calls exist, make another API call
+        3. Otherwise, synthesize final response
 
         Args:
-            initial_response: The response containing tool use requests
-            messages: Current message list
+            initial_response: The initial response containing tool use requests
+            messages: Current message list (will be mutated)
             system_content: System prompt content
             tool_manager: Manager to execute tools
+            tools: Available tools for subsequent API calls
+            max_rounds: Maximum number of tool call rounds (default 2)
 
         Returns:
-            Final response text after tool execution
+            Final response text after all tool execution
         """
-        # Add AI's tool use response to messages (append message object directly)
-        messages.append(initial_response.message)
+        current_response = initial_response
 
-        # Execute all tool calls and collect results
-        for tool_call in initial_response.message.tool_calls:
-            tool_result = tool_manager.execute_tool(
-                tool_call.function.name,
-                **tool_call.function.arguments
-            )
+        for round_num in range(max_rounds):
+            # Add AI's tool use response to messages
+            messages.append(current_response.message)
 
-            # Tool result message requires tool_name field for Ollama
-            messages.append({
-                "role": "tool",
-                "content": tool_result,
-                "tool_name": tool_call.function.name
-            })
+            # Execute all tool calls and collect results
+            for tool_call in current_response.message.tool_calls:
+                tool_result = tool_manager.execute_tool(
+                    tool_call.function.name,
+                    **tool_call.function.arguments
+                )
 
-        # Get final response
-        # Add system message to messages list for Ollama
-        final_messages = [{"role": "system", "content": system_content}] + messages
-        final_response = self.client.chat(
-            model=self.model,
-            messages=final_messages,
-            options=self.base_options
-        )
+                # Tool result message requires tool_name field for Ollama
+                messages.append({
+                    "role": "tool",
+                    "content": tool_result,
+                    "tool_name": tool_call.function.name
+                })
 
-        return final_response.message.content or ""
+            # If this was the last round, get final response and return
+            if round_num == max_rounds - 1:
+                api_messages = [{"role": "system", "content": system_content}] + messages
+                try:
+                    final_response = self.client.chat(
+                        model=self.model,
+                        messages=api_messages,
+                        options=self.base_options
+                    )
+                except (RequestError, ResponseError) as e:
+                    raise RuntimeError(f"Ollama client error: {e}") from e
+                except Exception as e:
+                    raise RuntimeError(f"Ollama client error: {e}") from e
+                return final_response.message.content or ""
+
+            # Build messages for next API call
+            api_messages = [{"role": "system", "content": system_content}] + messages
+
+            # Prepare kwargs - include tools for next round
+            kwargs = {
+                "model": self.model,
+                "messages": api_messages,
+                "options": self.base_options
+            }
+
+            # Pass tools for potential next round
+            if tools:
+                kwargs["tools"] = self._convert_tools_to_ollama(tools)
+
+            # Get next response
+            try:
+                current_response = self.client.chat(**kwargs)
+            except (RequestError, ResponseError) as e:
+                raise RuntimeError(f"Ollama client error: {e}") from e
+            except Exception as e:
+                raise RuntimeError(f"Ollama client error: {e}") from e
+
+            # Check if more tool calls - if not, we're done (get final response)
+            if not getattr(current_response.message, "tool_calls", None):
+                api_messages = [{"role": "system", "content": system_content}] + messages
+                try:
+                    final_response = self.client.chat(
+                        model=self.model,
+                        messages=api_messages,
+                        options=self.base_options
+                    )
+                except (RequestError, ResponseError) as e:
+                    raise RuntimeError(f"Ollama client error: {e}") from e
+                except Exception as e:
+                    raise RuntimeError(f"Ollama client error: {e}") from e
+                return final_response.message.content or ""
+
+        # This should not be reached, but as a safety net
+        return current_response.message.content or ""
