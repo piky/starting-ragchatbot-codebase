@@ -9,7 +9,7 @@ load_dotenv()
 class Config:
     """Configuration settings for the RAG system"""
     # Ollama API settings
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3.5:0.8b")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3.5:cloud")
     OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
     # Embedding model settings
