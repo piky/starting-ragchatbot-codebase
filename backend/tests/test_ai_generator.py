@@ -439,29 +439,32 @@ class TestSequentialToolCalling:
             tool_call_1 = make_tool_call("search_course_content", {"query": "a"})
             round1_response = make_message_mock(content=None, tool_calls=[tool_call_1])
 
-            # Round 2: AI requests second tool call
+            # Round 2: AI requests second tool call (but we stop after executing)
             tool_call_2 = make_tool_call("search_course_content", {"query": "b"})
             round2_response = make_message_mock(content=None, tool_calls=[tool_call_2])
 
-            # After round 2, AI still wants to make a tool call but we stop
+            # Final synthesis call after max rounds
+            final_response = make_message_mock(content="Final answer.")
+
             MockClient.return_value.chat.side_effect = [
                 round1_response,
                 round2_response,
+                final_response,
             ]
 
             mock_tm = MagicMock()
             mock_tm.execute_tool.side_effect = ["Result A", "Result B"]
 
             gen = AIGenerator(model="test-model", host="http://localhost:11434")
-            # This should NOT make a 3rd API call - it should stop at round 2
+            # After 2 rounds of tool calls, synthesize final response
             result = gen.generate_response(
                 "complex query requiring multiple searches",
                 tools=[{"name": "search_course_content", "description": "", "input_schema": {}}],
                 tool_manager=mock_tm,
             )
 
-            # Only 2 API calls made (despite 2 rounds of tool calls)
-            assert MockClient.return_value.chat.call_count == 2
+            # 3 API calls: 2 tool rounds + 1 synthesis after max rounds
+            assert MockClient.return_value.chat.call_count == 3
             assert mock_tm.execute_tool.call_count == 2
 
     def test_tool_execution_error_in_round_2_propagates(self):
