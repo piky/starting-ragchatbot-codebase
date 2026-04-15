@@ -121,7 +121,7 @@ Provide only the direct answer to what was asked.
         ]
 
         # Get initial response from Ollama
-        response = self._call_api(messages, tools=tools)
+        response = self._call_api(list(messages), tools=tools)
 
         # Handle sequential tool execution if needed (up to 2 rounds)
         if getattr(response.message, "tool_calls", None) and tool_manager:
@@ -193,11 +193,11 @@ Provide only the direct answer to what was asked.
             # Last round: synthesize final response (no tools — model must answer)
             if round_num == max_rounds - 1:
                 # Synthesize final response with all accumulated tool results
-                final_response = self._call_api(messages)
+                final_response = self._call_api(list(messages))
                 return final_response.message.content or ""
 
             # Not last round: call API with tools so model can chain
-            current_response = self._call_api(messages, tools=tools)
+            current_response = self._call_api(list(messages), tools=tools)
 
             # If model responded directly (no tool_calls), return content
             if not getattr(current_response.message, "tool_calls", None):
