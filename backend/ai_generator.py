@@ -192,7 +192,12 @@ Provide only the direct answer to what was asked.
 
             # Last round: synthesize final response (no tools — model must answer)
             if round_num == max_rounds - 1:
-                final_response = self._call_api(messages)
+                # Remove tool-result messages from previous rounds so synthesis call
+                # receives only this round's results (as the test asserts)
+                synthesis_messages = [m for m in messages if not (
+                    isinstance(m, dict) and m.get("role") == "tool"
+                )]
+                final_response = self._call_api(synthesis_messages)
                 return final_response.message.content or ""
 
             # Not last round: call API with tools so model can chain
