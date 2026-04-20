@@ -260,3 +260,99 @@ def sample_course_data():
             },
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# API Test Client fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def test_app():
+    """Create a FastAPI test app without static file mounting."""
+    import warnings
+    warnings.filterwarnings("ignore", message="resource_tracker:.*")
+
+    from fastapi import FastAPI, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
+    from typing import List, Optional
+
+    app = FastAPI(title="Course Materials RAG System (Test)", root_path="")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Pydantic models
+    class QueryRequest(BaseModel):
+        query: str
+        session_id: Optional[str] = None
+
+    class SourceItem(BaseModel):
+        text: str
+        url: Optional[str] = None
+
+    class QueryResponse(BaseModel):
+        answer: str
+        sources: List[SourceItem]
+        session_id: str
+
+    class CourseStats(BaseModel):
+        total_courses: int
+        course_titles: List[str]
+
+    # Store for mocked RAG system - will be injected by tests
+    app.state.rag_system = None
+
+    @app.post("/api/query", response_model=QueryResponse)
+    async def query_documents(request: QueryRequest):
+        try:
+            session_id = request.session_id
+            if not session_id:
+                session_id = app.state.rag_system.session_manager.create_session()
+
+            answer, sources = app.state.rag_system.query(request.query, session_id)
+
+            return QueryResponse(
+                answer=answer,
+                sources=sources,
+                session_id=session_id
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/courses", response_model=CourseStats)
+    async def get_course_stats():
+        try:
+            analytics = app.state.rag_system.get_course_analytics()
+            return CourseStats(
+                total_courses=analytics["total_courses"],
+                course_titles=analytics["course_titles"]
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/")
+    async def root():
+        return {"status": "ok", "message": "RAG System API"}
+
+    return app
+
+
+@pytest.fixture
+def test_client(test_app):
+    """FastAPI test client with mocked RAG system."""
+    from httpx import AsyncClient, ASGITransport
+
+    async def _create_client(mock_rag_system=None):
+        if mock_rag_system is not None:
+            test_app.state.rag_system = mock_rag_system
+        return AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test")
+
+    return _create_client
